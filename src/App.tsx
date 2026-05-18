@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Settings2, FolderDown, Video, Play, CheckCircle2, AlertCircle, Loader2, Edit3, Key, Languages, Clapperboard, XCircle, X, Search, Film, Tv, Trash2 } from 'lucide-react'
 import { Job, TrackInfo } from './types'
+import logo from './assets/sincrack_logo.png'
 
 const COMMON_LANGS = [
   { code: 'spa', label: 'Español (spa)' },
@@ -515,7 +516,7 @@ function App() {
       <main className="main-content">
         <div className="header-area">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <img src="/sincrack_logo.png" alt="SinCracK Logo" style={{ height: '48px', objectFit: 'contain' }} />
+            <img src={logo} alt="SinCracK Logo" style={{ height: '48px', objectFit: 'contain' }} />
             <h1>Video Compressor</h1>
           </div>
           <div style={{ display: 'flex', gap: '1rem' }}>
