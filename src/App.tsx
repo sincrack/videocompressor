@@ -51,6 +51,7 @@ function App() {
     const saved = localStorage.getItem('lifetimeSaved');
     return saved ? parseInt(saved, 10) : 0;
   });
+  const [moveToTrash, setMoveToTrash] = useState<boolean>(localStorage.getItem('moveToTrash') === 'true');
 
   // Estado para el modal TMDB (FileBot style)
   const [showTmdbModal, setShowTmdbModal] = useState(false);
@@ -66,6 +67,7 @@ function App() {
   useEffect(() => { localStorage.setItem('autoShutdown', String(autoShutdown)); }, [autoShutdown]);
   useEffect(() => { localStorage.setItem('autoSleep', String(autoSleep)); }, [autoSleep]);
   useEffect(() => { localStorage.setItem('lifetimeSaved', String(lifetimeSaved)); }, [lifetimeSaved]);
+  useEffect(() => { localStorage.setItem('moveToTrash', String(moveToTrash)); }, [moveToTrash]);
 
   useEffect(() => {
     if (countdown === null) return;
@@ -381,6 +383,14 @@ function App() {
         setLifetimeSaved(prev => prev + saved);
       }
 
+      if (moveToTrash) {
+        try {
+          await window.ipcRenderer.invoke('trash-file', job.filePath);
+        } catch (err) {
+          console.error('Error trashing original file:', err);
+        }
+      }
+
       new Notification("Compresión Exitosa", {
         body: `Se ha completado: ${job.outputName}`
       });
@@ -489,6 +499,14 @@ function App() {
                     if (e.target.checked) setAutoShutdown(false);
                   }} />
                   Suspender el equipo al terminar la cola
+                </label>
+              </div>
+            <div className="form-group" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+              <label>🗑️ Borrado Seguro (Espacio en disco)</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={moveToTrash} onChange={(e) => setMoveToTrash(e.target.checked)} />
+                  Mover original a la papelera al terminar con éxito
                 </label>
               </div>
             </div>
@@ -705,7 +723,37 @@ function App() {
             <p>Haz clic para añadir archivos o arrástralos aquí</p>
           </div>
         ) : (
-          <div className="job-list">
+          <>
+            {jobs.some(j => j.status === 'processing' || j.status === 'completed' || j.status === 'error') && (() => {
+              const totalCount = jobs.length;
+              const completedCount = jobs.filter(j => j.status === 'completed').length;
+              const errorCount = jobs.filter(j => j.status === 'error').length;
+              const overallProgress = Math.round(jobs.reduce((acc, j) => acc + j.progress, 0) / totalCount);
+              const isProcessing = jobs.some(j => j.status === 'processing');
+              
+              return (
+                <div style={{ background: 'var(--panel-bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '1.25rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ background: isProcessing ? 'var(--accent)' : '#10b981', color: 'white', padding: '3px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        {isProcessing ? 'Cola en Proceso' : 'Cola Finalizada'}
+                      </span>
+                      <strong style={{ fontSize: '0.9rem' }}>
+                        {completedCount} de {totalCount} completados {errorCount > 0 ? `(${errorCount} con errores)` : ''}
+                      </strong>
+                    </div>
+                    <span style={{ fontSize: '0.9rem', color: isProcessing ? 'var(--accent)' : '#10b981', fontWeight: 'bold' }}>
+                      Progreso General: {overallProgress}%
+                    </span>
+                  </div>
+                  <div style={{ height: '0.6rem', background: 'var(--bg-color)', borderRadius: '999px', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', background: isProcessing ? 'var(--accent)' : '#10b981', width: `${overallProgress}%`, transition: 'width 0.3s ease' }}></div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="job-list">
             {jobs.map(job => (
               <div key={job.id} className="job-item">
                 <div className="job-header">
@@ -802,7 +850,8 @@ function App() {
               </div>
             ))}
           </div>
-        )}
+        </>
+      )}
       </main>
 
       {/* MODAL DE LOGS EN VIVO */}

@@ -139,4 +139,15 @@ export function setupIpcHandlers() {
 
     return resultFiles;
   });
+
+  ipcMain.handle('trash-file', async (_event, filePath: string) => {
+    const { shell } = require('electron');
+    try {
+      await shell.trashItem(filePath);
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error trashing file:', filePath, err);
+      return { success: false, error: err.message };
+    }
+  });
 }
