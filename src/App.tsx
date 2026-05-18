@@ -68,6 +68,16 @@ function App() {
   useEffect(() => { localStorage.setItem('lifetimeSaved', String(lifetimeSaved)); }, [lifetimeSaved]);
 
   useEffect(() => {
+    const preventDefault = (e: DragEvent) => e.preventDefault();
+    window.addEventListener('dragover', preventDefault);
+    window.addEventListener('drop', preventDefault);
+    return () => {
+      window.removeEventListener('dragover', preventDefault);
+      window.removeEventListener('drop', preventDefault);
+    };
+  }, []);
+
+  useEffect(() => {
     if (countdown === null) return;
     if (countdown === 0) {
       if (countdownType === 'shutdown') {
@@ -192,8 +202,14 @@ function App() {
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer.files).map((f: any) => f.path).filter(p => p);
-    await processSelectedFiles(files);
+    const paths = Array.from(e.dataTransfer.files).map((f: any) => f.path).filter(p => p);
+    if (paths.length === 0) return;
+    try {
+      const videoFiles = await window.ipcRenderer.invoke('scan-paths', paths);
+      await processSelectedFiles(videoFiles);
+    } catch (err) {
+      console.error('Error scanning dropped paths:', err);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {

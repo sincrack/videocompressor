@@ -107,4 +107,36 @@ export function setupIpcHandlers() {
       }
     });
   });
+
+  ipcMain.handle('scan-paths', async (_event, paths: string[]) => {
+    const fs = require('fs');
+    const path = require('path');
+    const videoExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.ts'];
+    const resultFiles: string[] = [];
+
+    const scanRecursive = (targetPath: string) => {
+      try {
+        const stats = fs.statSync(targetPath);
+        if (stats.isFile()) {
+          const ext = path.extname(targetPath).toLowerCase();
+          if (videoExtensions.includes(ext)) {
+            resultFiles.push(targetPath);
+          }
+        } else if (stats.isDirectory()) {
+          const files = fs.readdirSync(targetPath);
+          for (const file of files) {
+            scanRecursive(path.join(targetPath, file));
+          }
+        }
+      } catch (err) {
+        console.error('Error scanning path:', targetPath, err);
+      }
+    };
+
+    for (const p of paths) {
+      scanRecursive(p);
+    }
+
+    return resultFiles;
+  });
 }
