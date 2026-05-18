@@ -62,6 +62,7 @@ export interface EncodeOptions {
   selectedAudioIndices: number[];
   selectedSubtitleIndices: number[];
   onProgress?: (percent: number, timeStr: string, fps: number) => void;
+  onLog?: (msg: string) => void;
 }
 
 const activeProcesses = new Map<string, any>();
@@ -153,6 +154,7 @@ export function startEncoding(options: EncodeOptions): Promise<void> {
     ffmpeg.stderr.on('data', (data) => {
       const msg = data.toString();
       stderrLog += msg + '\n';
+      if (options.onLog) options.onLog(msg);
       // Extract duration from initial info
       const durationMatch = msg.match(/Duration: (\d{2}:\d{2}:\d{2}\.\d{2})/);
       if (durationMatch) {
@@ -163,6 +165,7 @@ export function startEncoding(options: EncodeOptions): Promise<void> {
 
     ffmpeg.stdout.on('data', (data) => {
       const msg = data.toString();
+      if (options.onLog) options.onLog(msg);
       
       const fpsMatch = msg.match(/fps=\s*([\d.]+)/);
       if (fpsMatch) {

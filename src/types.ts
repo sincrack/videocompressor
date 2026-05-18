@@ -28,4 +28,5 @@ export interface Job {
   error?: string;
   selectedAudio: number[];
   selectedSubtitles: number[];
+  logs?: string[];
 }

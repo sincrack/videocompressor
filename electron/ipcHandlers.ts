@@ -36,6 +36,9 @@ export function setupIpcHandlers() {
         ...options,
         onProgress: (percent, timeStr, fps) => {
           event.sender.send(`encoding-progress-${options.jobId}`, { percent, timeStr, fps });
+        },
+        onLog: (msg) => {
+          event.sender.send(`encoding-log-${options.jobId}`, msg);
         }
       });
       return { success: true };
@@ -47,6 +50,30 @@ export function setupIpcHandlers() {
 
   ipcMain.handle('cancel-encoding', (_event, jobId: string) => {
     cancelEncoding(jobId);
+    return { success: true };
+  });
+
+  ipcMain.handle('shutdown-system', async () => {
+    const exec = require('child_process').exec;
+    if (process.platform === 'win32') {
+      exec('shutdown /s /f /t 0');
+    } else if (process.platform === 'darwin') {
+      exec("osascript -e 'tell application \"System Events\" to shut down'");
+    } else {
+      exec('shutdown -h now');
+    }
+    return { success: true };
+  });
+
+  ipcMain.handle('suspend-system', async () => {
+    const exec = require('child_process').exec;
+    if (process.platform === 'win32') {
+      exec('powershell.exe -NoProfile -Command "Add-Type -AssemblyPath System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)"');
+    } else if (process.platform === 'darwin') {
+      exec('pmset sleepnow');
+    } else {
+      exec('systemctl suspend');
+    }
     return { success: true };
   });
 

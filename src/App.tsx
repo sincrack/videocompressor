@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Settings2, FolderDown, Video, Play, CheckCircle2, AlertCircle, Loader2, Edit3, Key, Languages, Clapperboard, XCircle, X, Search, Film, Tv, Trash2 } from 'lucide-react'
+import { Settings2, FolderDown, Video, Play, CheckCircle2, AlertCircle, Loader2, Edit3, Key, Languages, Clapperboard, XCircle, X, Search, Film, Tv, Trash2, Terminal } from 'lucide-react'
 import { Job, TrackInfo } from './types'
 import logo from './assets/sincrack_logo.png'
 
@@ -30,6 +30,15 @@ function App() {
   const [prefLangs, setPrefLangs] = useState<string[]>(JSON.parse(localStorage.getItem('prefLangsList') || '["spa", "eng"]'));
   const [tmdbKey, setTmdbKey] = useState(localStorage.getItem('tmdbKey') || '');
   
+  // Auto-apagado y suspensión (Desactivados por defecto)
+  const [autoShutdown, setAutoShutdown] = useState<boolean>(localStorage.getItem('autoShutdown') === 'true');
+  const [autoSleep, setAutoSleep] = useState<boolean>(localStorage.getItem('autoSleep') === 'true');
+  
+  // Cuenta atrás y Logs en vivo
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [countdownType, setCountdownType] = useState<'shutdown' | 'sleep' | null>(null);
+  const [viewingLogsJobId, setViewingLogsJobId] = useState<string | null>(null);
+
   // Estado para el modal TMDB (FileBot style)
   const [showTmdbModal, setShowTmdbModal] = useState(false);
   const [tmdbType, setTmdbType] = useState<'tv' | 'movie'>('tv');
@@ -41,6 +50,28 @@ function App() {
 
   useEffect(() => { localStorage.setItem('prefLangsList', JSON.stringify(prefLangs)); }, [prefLangs]);
   useEffect(() => { localStorage.setItem('tmdbKey', tmdbKey); }, [tmdbKey]);
+  useEffect(() => { localStorage.setItem('autoShutdown', String(autoShutdown)); }, [autoShutdown]);
+  useEffect(() => { localStorage.setItem('autoSleep', String(autoSleep)); }, [autoSleep]);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown === 0) {
+      if (countdownType === 'shutdown') {
+        window.ipcRenderer.invoke('shutdown-system');
+      } else if (countdownType === 'sleep') {
+        window.ipcRenderer.invoke('suspend-system');
+      }
+      setCountdown(null);
+      setCountdownType(null);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setCountdown(prev => (prev !== null ? prev - 1 : null));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [countdown, countdownType]);
   
   useEffect(() => {
     if (!profile) {
@@ -52,6 +83,15 @@ function App() {
       localStorage.setItem('hwProfile', profile);
     }
   }, [profile]);
+
+  useEffect(() => {
+    if (viewingLogsJobId) {
+      const el = document.getElementById('logs-container');
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  }, [jobs, viewingLogsJobId]);
 
   const handleSelectOutDir = async () => {
     const dir = await window.ipcRenderer.invoke('select-directory');
@@ -272,9 +312,9 @@ function App() {
     setJobs(prev => prev.map(j => j.id === jobId ? { ...j, outputName: name } : j));
   };
 
-  const startJob = async (job: Job) => {
-    if (job.status === 'processing' || job.status === 'completed') return;
-    setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'processing', progress: 0 } : j));
+  const startJob = async (job: Job): Promise<boolean> => {
+    if (job.status === 'processing' || job.status === 'completed') return false;
+    setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'processing', progress: 0, logs: [] } : j));
 
     const pathSeparator = job.filePath.includes('\\') ? '\\' : '/';
     let outputPath = outDir ? `${outDir}${pathSeparator}${job.outputName}` : job.filePath.replace(/[^\\/]+$/, job.outputName);
@@ -284,7 +324,18 @@ function App() {
       setJobs(prev => prev.map(j => j.id === job.id ? { ...j, progress: data.percent, timeRemaining: data.timeStr, fps: data.fps } : j));
     };
 
+    const logListener = (_event: any, logMsg: string) => {
+      setJobs(prev => prev.map(j => {
+        if (j.id === job.id) {
+          const currentLogs = j.logs || [];
+          return { ...j, logs: [...currentLogs, logMsg].slice(-300) };
+        }
+        return j;
+      }));
+    };
+
     window.ipcRenderer.on(`encoding-progress-${job.id}`, progressListener);
+    window.ipcRenderer.on(`encoding-log-${job.id}`, logListener);
 
     const result = await window.ipcRenderer.invoke('start-encoding', {
       jobId: job.id,
@@ -297,11 +348,20 @@ function App() {
     });
 
     window.ipcRenderer.off(`encoding-progress-${job.id}`, progressListener);
+    window.ipcRenderer.off(`encoding-log-${job.id}`, logListener);
 
     if (result.success) {
       setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'completed', progress: 100 } : j));
+      new Notification("Compresión Exitosa", {
+        body: `Se ha completado: ${job.outputName}`
+      });
+      return true;
     } else {
       setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'error', error: result.error } : j));
+      new Notification("Error de Compresión", {
+        body: `Fallo en: ${job.outputName}`
+      });
+      return false;
     }
   };
 
@@ -310,8 +370,34 @@ function App() {
   };
 
   const startAll = async () => {
+    let processedCount = 0;
+    let hasErrors = false;
     for (const job of jobs) {
-      if (job.status === 'pending') await startJob(job);
+      if (job.status === 'pending') {
+        processedCount++;
+        const success = await startJob(job);
+        if (!success) hasErrors = true;
+      }
+    }
+
+    if (processedCount > 0) {
+      if (hasErrors) {
+        new Notification("SinCracK Video Compressor", {
+          body: "La cola de compresión ha finalizado con algunos errores."
+        });
+      } else {
+        new Notification("SinCracK Video Compressor", {
+          body: "¡Todos los vídeos se han comprimido correctamente!"
+        });
+      }
+
+      if (autoShutdown) {
+        setCountdownType('shutdown');
+        setCountdown(60);
+      } else if (autoSleep) {
+        setCountdownType('sleep');
+        setCountdown(60);
+      }
     }
   };
 
@@ -349,6 +435,25 @@ function App() {
                     {lang.label}
                   </label>
                 ))}
+            </div>
+
+            <div className="form-group" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+              <label>🔋 Gestión de Energía (Cola finalizada)</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={autoShutdown} onChange={(e) => {
+                    setAutoShutdown(e.target.checked);
+                    if (e.target.checked) setAutoSleep(false);
+                  }} />
+                  Apagar el equipo al terminar la cola
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={autoSleep} onChange={(e) => {
+                    setAutoSleep(e.target.checked);
+                    if (e.target.checked) setAutoShutdown(false);
+                  }} />
+                  Suspender el equipo al terminar la cola
+                </label>
               </div>
             </div>
 
@@ -559,7 +664,16 @@ function App() {
                       )}
                     </div>
                     
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      {(job.status === 'processing' || job.status === 'completed' || job.status === 'error') && (
+                        <button 
+                          className="btn-secondary" 
+                          style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '0.25rem', borderColor: 'var(--border)' }}
+                          onClick={() => setViewingLogsJobId(job.id)}
+                        >
+                          <Terminal size={14} /> Logs
+                        </button>
+                      )}
                       {job.status === 'pending' && (
                         <button onClick={() => removeJob(job.id)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
                           <Trash2 size={16} />
@@ -618,6 +732,86 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* MODAL DE LOGS EN VIVO */}
+      {viewingLogsJobId && (() => {
+        const job = jobs.find(j => j.id === viewingLogsJobId);
+        if (!job) return null;
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: '#090d16', padding: '2rem', borderRadius: '12px', width: '800px', height: '70vh', maxWidth: '95%', border: '1px solid var(--border)', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+              <button onClick={() => setViewingLogsJobId(null)} style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                <X size={24} />
+              </button>
+              <h2 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#f8fafc' }}>
+                <Terminal size={20} color="var(--accent)" /> Logs de FFmpeg: {job.outputName}
+              </h2>
+              <div 
+                id="logs-container"
+                style={{ 
+                  flex: 1, 
+                  background: '#030712', 
+                  color: '#e2e8f0', 
+                  padding: '1rem', 
+                  borderRadius: '6px', 
+                  fontFamily: 'monospace', 
+                  fontSize: '0.85rem', 
+                  overflowY: 'auto', 
+                  whiteSpace: 'pre-wrap', 
+                  border: '1px solid #1f2937' 
+                }}
+              >
+                {job.logs && job.logs.length > 0 ? (
+                  job.logs.join('')
+                ) : (
+                  <span style={{ color: 'var(--text-muted)' }}>Esperando salida de FFmpeg...</span>
+                )}
+              </div>
+              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                <button 
+                  className="btn-secondary"
+                  onClick={() => {
+                    const text = job.logs ? job.logs.join('') : '';
+                    navigator.clipboard.writeText(text);
+                    alert('¡Logs copiados al portapapeles!');
+                  }}
+                  disabled={!job.logs || job.logs.length === 0}
+                >
+                  Copiar Logs
+                </button>
+                <button className="btn-primary" onClick={() => setViewingLogsJobId(null)}>Cerrar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* OVERLAY DE CUENTA ATRÁS PARA APAGADO/SUSPENSIÓN */}
+      {countdown !== null && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(9, 13, 22, 0.95)', zIndex: 4000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#f8fafc' }}>
+          <div style={{ background: '#111827', padding: '3rem', borderRadius: '16px', border: '1px solid #1f2937', textAlign: 'center', maxWidth: '500px', width: '90%', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize: '5rem', fontWeight: 'bold', color: 'var(--accent)', marginBottom: '1.5rem', fontFamily: 'monospace' }}>
+              {countdown}
+            </div>
+            <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>
+              {countdownType === 'shutdown' ? 'Apagando el Equipo' : 'Suspendiendo el Equipo'}
+            </h2>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '2rem', fontSize: '0.95rem' }}>
+              SinCracK Video Compressor ha completado todas las tareas de codificación. El sistema se {countdownType === 'shutdown' ? 'apagará' : 'suspenderá'} automáticamente para ahorrar energía.
+            </p>
+            <button 
+              className="btn-primary" 
+              style={{ background: '#ef4444', color: 'white', padding: '1rem 2rem', fontSize: '1.1rem', width: '100%', borderRadius: '8px' }}
+              onClick={() => {
+                setCountdown(null);
+                setCountdownType(null);
+              }}
+            >
+              CANCELAR ACCIÓN
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
