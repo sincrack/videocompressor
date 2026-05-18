@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import ffmpegPath from 'ffmpeg-static';
 // @ts-ignore
 import ffprobeStatic from 'ffprobe-static';
@@ -38,13 +39,21 @@ export async function getMediaInfo(filePath: string): Promise<MediaInfo> {
           language: s.tags?.language,
           title: s.tags?.title
         }));
+        let sizeBytes = 0;
+        try {
+          sizeBytes = fs.statSync(filePath).size;
+        } catch (e) {
+          console.error('Error reading file size:', e);
+        }
+
         resolve({ 
           filePath, 
           show: formatTags.show,
           season: formatTags.season_number,
           episode: formatTags.episode_id,
           title: formatTags.title,
-          tracks 
+          tracks,
+          sizeBytes
         });
       } catch (err) {
         reject(err);

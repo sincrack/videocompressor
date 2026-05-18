@@ -13,6 +13,7 @@ export interface MediaInfo {
   episode?: string;
   title?: string;
   tracks: TrackInfo[];
+  sizeBytes?: number;
 }
 
 export interface Job {
@@ -29,4 +30,6 @@ export interface Job {
   selectedAudio: number[];
   selectedSubtitles: number[];
   logs?: string[];
+  originalSize?: number;
+  compressedSize?: number;
 }

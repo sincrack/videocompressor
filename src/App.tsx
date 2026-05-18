@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Settings2, FolderDown, Video, Play, CheckCircle2, AlertCircle, Loader2, Edit3, Key, Languages, Clapperboard, XCircle, X, Search, Film, Tv, Trash2, Terminal } from 'lucide-react'
+import { Settings2, FolderDown, Video, Play, CheckCircle2, AlertCircle, Loader2, Edit3, Key, Languages, Clapperboard, XCircle, X, Search, Film, Tv, Trash2, Terminal, HardDrive } from 'lucide-react'
 import { Job, TrackInfo } from './types'
 import logo from './assets/sincrack_logo.png'
 
@@ -17,6 +17,15 @@ const COMMON_LANGS = [
 const sanitizeName = (name: string) => {
   if (!name) return '';
   return name.replace(/[\\/:*?"<>|]/g, '');
+};
+
+const formatBytes = (bytes: number, decimals = 2) => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
 
 function App() {
@@ -38,6 +47,10 @@ function App() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [countdownType, setCountdownType] = useState<'shutdown' | 'sleep' | null>(null);
   const [viewingLogsJobId, setViewingLogsJobId] = useState<string | null>(null);
+  const [lifetimeSaved, setLifetimeSaved] = useState<number>(() => {
+    const saved = localStorage.getItem('lifetimeSaved');
+    return saved ? parseInt(saved, 10) : 0;
+  });
 
   // Estado para el modal TMDB (FileBot style)
   const [showTmdbModal, setShowTmdbModal] = useState(false);
@@ -52,6 +65,7 @@ function App() {
   useEffect(() => { localStorage.setItem('tmdbKey', tmdbKey); }, [tmdbKey]);
   useEffect(() => { localStorage.setItem('autoShutdown', String(autoShutdown)); }, [autoShutdown]);
   useEffect(() => { localStorage.setItem('autoSleep', String(autoSleep)); }, [autoSleep]);
+  useEffect(() => { localStorage.setItem('lifetimeSaved', String(lifetimeSaved)); }, [lifetimeSaved]);
 
   useEffect(() => {
     if (countdown === null) return;
@@ -159,7 +173,8 @@ function App() {
               mediaInfo: info,
               outputName: newOutputName,
               selectedAudio,
-              selectedSubtitles
+              selectedSubtitles,
+              originalSize: info.sizeBytes || 0
             };
           }
           return j;
@@ -351,7 +366,15 @@ function App() {
     window.ipcRenderer.off(`encoding-log-${job.id}`, logListener);
 
     if (result.success) {
-      setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'completed', progress: 100 } : j));
+      const compSize = result.compressedSize || 0;
+      setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'completed', progress: 100, compressedSize: compSize } : j));
+      
+      const origSize = job.originalSize || 0;
+      if (origSize > compSize) {
+        const saved = origSize - compSize;
+        setLifetimeSaved(prev => prev + saved);
+      }
+
       new Notification("Compresión Exitosa", {
         body: `Se ha completado: ${job.outputName}`
       });
@@ -406,6 +429,12 @@ function App() {
   };
 
   const pendingJobs = jobs.filter(j => j.status === 'pending');
+  const sessionSaved = jobs.reduce((acc, job) => {
+    if (job.status === 'completed' && job.originalSize && job.compressedSize && job.originalSize > job.compressedSize) {
+      return acc + (job.originalSize - job.compressedSize);
+    }
+    return acc;
+  }, 0);
 
   return (
     <div className="app-container" onDrop={handleDrop} onDragOver={handleDragOver}>
@@ -612,6 +641,33 @@ function App() {
           <Clapperboard size={18} color="var(--accent)" /> Renombrador TMDB
         </button>
 
+        <div className="form-group" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+            <HardDrive size={14} color="var(--accent)" /> Espacio Ahorrado
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.75rem' }}>
+            <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.6rem 0.4rem', borderRadius: '6px', textAlign: 'center', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>En esta sesión</div>
+              <div style={{ fontSize: '1rem', fontWeight: 'bold', color: 'var(--accent)', marginTop: '0.25rem' }}>{formatBytes(sessionSaved)}</div>
+            </div>
+            <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.6rem 0.4rem', borderRadius: '6px', textAlign: 'center', border: '1px solid var(--border)', position: 'relative' }}>
+              <button 
+                onClick={() => {
+                  if (confirm('¿Seguro que quieres reiniciar el contador histórico?')) {
+                    setLifetimeSaved(0);
+                  }
+                }}
+                style={{ position: 'absolute', top: '2px', right: '4px', background: 'transparent', border: 'none', color: 'var(--error)', cursor: 'pointer', fontSize: '0.65rem', padding: '2px' }}
+                title="Reiniciar total histórico"
+              >
+                🔄
+              </button>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>En total</div>
+              <div style={{ fontSize: '1rem', fontWeight: 'bold', color: '#10b981', marginTop: '0.25rem' }}>{formatBytes(lifetimeSaved)}</div>
+            </div>
+          </div>
+        </div>
+
         <div style={{ marginTop: 'auto' }}>
           <button className="btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '1rem' }} onClick={startAll}>
             <Play size={20} /> Comprimir Todo
@@ -666,6 +722,15 @@ function App() {
                     </div>
                     
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      {job.status === 'completed' && job.originalSize && job.compressedSize && job.originalSize > job.compressedSize && (() => {
+                        const savedBytes = job.originalSize - job.compressedSize;
+                        const savedPercent = Math.round((savedBytes / job.originalSize) * 100);
+                        return (
+                          <span style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+                            -{formatBytes(savedBytes)} (-{savedPercent}%)
+                          </span>
+                        );
+                      })()}
                       {(job.status === 'processing' || job.status === 'completed' || job.status === 'error') && (
                         <button 
                           className="btn-secondary" 

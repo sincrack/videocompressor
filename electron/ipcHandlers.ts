@@ -41,7 +41,14 @@ export function setupIpcHandlers() {
           event.sender.send(`encoding-log-${options.jobId}`, msg);
         }
       });
-      return { success: true };
+      const fs = require('fs');
+      let compressedSize = 0;
+      try {
+        compressedSize = fs.statSync(options.outputPath).size;
+      } catch (e) {
+        console.error('Error reading compressed file size:', e);
+      }
+      return { success: true, compressedSize };
     } catch (err: any) {
       console.error('Encoding error:', err);
       return { success: false, error: err.message };
