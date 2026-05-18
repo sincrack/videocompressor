@@ -501,6 +501,8 @@ function App() {
                   Suspender el equipo al terminar la cola
                 </label>
               </div>
+            </div>
+
             <div className="form-group" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
               <label>🗑️ Borrado Seguro (Espacio en disco)</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
