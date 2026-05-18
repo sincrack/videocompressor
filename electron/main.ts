@@ -29,6 +29,9 @@ function createWindow() {
     },
   })
 
+  // Eliminar la barra de menú nativa clásica (File, Edit, View...) para un diseño oscuro limpio
+  win.removeMenu();
+
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
     win?.webContents.send('main-process-message', (new Date).toLocaleString())
