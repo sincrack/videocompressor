@@ -435,6 +435,7 @@ function App() {
                     {lang.label}
                   </label>
                 ))}
+              </div>
             </div>
 
             <div className="form-group" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
