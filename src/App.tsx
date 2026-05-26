@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Settings2, FolderDown, Video, Play, CheckCircle2, AlertCircle, Loader2, Edit3, Key, Languages, Clapperboard, XCircle, X, Search, Film, Tv, Trash2, Terminal, HardDrive } from 'lucide-react'
 import { Job, TrackInfo } from './types'
 import logo from './assets/sincrack_logo.png'
@@ -52,6 +52,17 @@ function App() {
     return saved ? parseInt(saved, 10) : 0;
   });
   const [moveToTrash, setMoveToTrash] = useState<boolean>(localStorage.getItem('moveToTrash') === 'true');
+
+  // Control de la cola de compresión secuencial
+  const [isQueueActive, setIsQueueActive] = useState(false);
+  const isQueueActiveRef = useRef(false);
+  const processingJobIdRef = useRef<string | null>(null);
+  const queueProcessedCountRef = useRef(0);
+  const queueHasErrorsRef = useRef(false);
+
+  useEffect(() => {
+    isQueueActiveRef.current = isQueueActive;
+  }, [isQueueActive]);
 
   // Estado para el modal TMDB (FileBot style)
   const [showTmdbModal, setShowTmdbModal] = useState(false);
@@ -109,6 +120,51 @@ function App() {
     }
   }, [jobs, viewingLogsJobId]);
 
+  useEffect(() => {
+    if (!isQueueActive) return;
+
+    // Verificar si ya hay alguna tarea ejecutándose
+    const processingJob = jobs.find(j => j.status === 'processing');
+    if (processingJob) {
+      return;
+    }
+
+    // Buscar la siguiente tarea pendiente
+    const nextJob = jobs.find(j => j.status === 'pending');
+    if (nextJob) {
+      if (processingJobIdRef.current !== nextJob.id) {
+        processingJobIdRef.current = nextJob.id;
+        startJob(nextJob);
+      }
+    } else {
+      // Cola finalizada
+      setIsQueueActive(false);
+      processingJobIdRef.current = null;
+
+      if (queueProcessedCountRef.current > 0) {
+        if (queueHasErrorsRef.current) {
+          new Notification("SinCracK Video Compressor", {
+            body: "La cola de compresión ha finalizado con algunos errores."
+          });
+        } else {
+          new Notification("SinCracK Video Compressor", {
+            body: "¡Todos los vídeos se han comprimido correctamente!"
+          });
+        }
+
+        if (autoShutdown) {
+          setCountdownType('shutdown');
+          setCountdown(60);
+        } else if (autoSleep) {
+          setCountdownType('sleep');
+          setCountdown(60);
+        }
+      }
+      queueProcessedCountRef.current = 0;
+      queueHasErrorsRef.current = false;
+    }
+  }, [isQueueActive, jobs]);
+
   const handleSelectOutDir = async () => {
     const dir = await window.ipcRenderer.invoke('select-directory');
     if (dir) setOutDir(dir);
@@ -145,7 +201,14 @@ function App() {
           return prefLangs.some(pref => lang.includes(pref) || title.includes(pref));
         };
 
-        const selectedAudio = info.tracks.filter((t: TrackInfo) => t.type === 'audio' && isMatch(t)).map((t: TrackInfo) => t.index);
+        const selectedAudio = info.tracks.filter((t: TrackInfo) => 
+          t.type === 'audio' && (
+            isMatch(t) || 
+            !t.language || 
+            t.language.toLowerCase() === 'und' || 
+            t.language.toLowerCase() === 'undetermined'
+          )
+        ).map((t: TrackInfo) => t.index);
         const selectedSubtitles = info.tracks.filter((t: TrackInfo) => t.type === 'subtitle' && isMatch(t)).map((t: TrackInfo) => t.index);
 
         let newOutputName = job.outputName;
@@ -374,6 +437,9 @@ function App() {
     window.ipcRenderer.off(`encoding-log-${job.id}`, logListener);
 
     if (result.success) {
+      if (isQueueActiveRef.current) {
+        queueProcessedCountRef.current++;
+      }
       const compSize = result.compressedSize || 0;
       setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'completed', progress: 100, compressedSize: compSize } : j));
       
@@ -396,6 +462,10 @@ function App() {
       });
       return true;
     } else {
+      if (isQueueActiveRef.current) {
+        queueProcessedCountRef.current++;
+        queueHasErrorsRef.current = true;
+      }
       setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'error', error: result.error } : j));
       new Notification("Error de Compresión", {
         body: `Fallo en: ${job.outputName}`
@@ -408,35 +478,25 @@ function App() {
     await window.ipcRenderer.invoke('cancel-encoding', jobId);
   };
 
-  const startAll = async () => {
-    let processedCount = 0;
-    let hasErrors = false;
-    for (const job of jobs) {
-      if (job.status === 'pending') {
-        processedCount++;
-        const success = await startJob(job);
-        if (!success) hasErrors = true;
-      }
-    }
+  const startAll = () => {
+    if (isQueueActive) return;
+    const hasPending = jobs.some(j => j.status === 'pending');
+    if (!hasPending) return;
 
-    if (processedCount > 0) {
-      if (hasErrors) {
-        new Notification("SinCracK Video Compressor", {
-          body: "La cola de compresión ha finalizado con algunos errores."
-        });
-      } else {
-        new Notification("SinCracK Video Compressor", {
-          body: "¡Todos los vídeos se han comprimido correctamente!"
-        });
-      }
+    queueProcessedCountRef.current = 0;
+    queueHasErrorsRef.current = false;
+    setIsQueueActive(true);
+  };
 
-      if (autoShutdown) {
-        setCountdownType('shutdown');
-        setCountdown(60);
-      } else if (autoSleep) {
-        setCountdownType('sleep');
-        setCountdown(60);
-      }
+  const stopAll = async () => {
+    setIsQueueActive(false);
+    processingJobIdRef.current = null;
+    queueProcessedCountRef.current = 0;
+    queueHasErrorsRef.current = false;
+
+    const activeJob = jobs.find(j => j.status === 'processing');
+    if (activeJob) {
+      await cancelJob(activeJob.id);
     }
   };
 
@@ -695,9 +755,24 @@ function App() {
         </div>
 
         <div style={{ marginTop: 'auto' }}>
-          <button className="btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '1rem' }} onClick={startAll}>
-            <Play size={20} /> Comprimir Todo
-          </button>
+          {isQueueActive ? (
+            <button 
+              className="btn-primary" 
+              style={{ width: '100%', justifyContent: 'center', padding: '1rem', background: '#ef4444', borderColor: '#ef4444' }} 
+              onClick={stopAll}
+            >
+              <XCircle size={20} /> Detener Cola
+            </button>
+          ) : (
+            <button 
+              className="btn-primary" 
+              style={{ width: '100%', justifyContent: 'center', padding: '1rem' }} 
+              onClick={startAll}
+              disabled={jobs.filter(j => j.status === 'pending').length === 0}
+            >
+              <Play size={20} /> Comprimir Todo
+            </button>
+          )}
         </div>
       </aside>
 
